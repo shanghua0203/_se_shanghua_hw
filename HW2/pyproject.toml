@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+# pytest-playwright 的參數：
+# base_url 是測試網站的根網址；系統測試會啟動伺服器在 http://127.0.0.1:8000
+# （瀏覽器預設就是無頭模式 headless=True，不需要額外設定）
+base_url = "http://127.0.0.1:8000"
