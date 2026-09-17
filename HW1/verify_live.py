@@ -71,7 +71,8 @@ def test_two_post() -> bool:
 def test_three_bad_url() -> bool:
     def check(result: subprocess.CompletedProcess) -> None:
         assert result.returncode != 0, "不存在網址竟回傳 0"
-        assert "mycurl: error:" in result.stderr, "stderr 沒有優雅的錯誤訊息"
+        assert result.returncode in (6, 7, 28), f"意外的退出碼 {result.returncode}"
+        assert "mycurl: (" in result.stderr, "stderr 沒有優雅的錯誤訊息"
         assert "Traceback" not in result.stderr, "程式噴出 Traceback"
 
     return run_case(

@@ -1,8 +1,19 @@
+import socket
+import ssl
 from unittest import mock
 
 import pytest
 
-from mycurl.client import HttpClient, HttpClientError
+from mycurl import client as client_module
+from mycurl.client import (
+    ConnectionFailedError,
+    DnsError,
+    HttpClient,
+    HttpClientError,
+    RequestTimeoutError,
+    SslError,
+    TooManyRedirectsError,
+)
 
 
 class FakeResponse:
@@ -12,11 +23,20 @@ class FakeResponse:
         self._headers = headers or [("Content-Type", "text/plain")]
         self._body = body
 
-    def read(self):
-        return self._body
+    def read(self, amt=-1):
+        if not self._body:
+            return b""
+        data, self._body = self._body, b""
+        return data
 
     def getheaders(self):
         return self._headers
+
+    def getheader(self, name, default=None):
+        for key, value in self._headers:
+            if key.lower() == name.lower():
+                return value
+        return default
 
 
 @pytest.fixture
@@ -107,8 +127,8 @@ def test_output_saves_response_to_file(fake_conn, tmp_path):
 
     result = client.request("GET", "http://example.com/", output=str(out_path))
 
-    assert result == "hello world"
-    assert out_path.read_text(encoding="utf-8") == "hello world"
+    assert result is None
+    assert out_path.read_bytes() == b"hello world"
 
 
 def test_verbose_outputs_headers_to_stderr(fake_conn, capsys):
@@ -125,3 +145,141 @@ def test_verbose_outputs_headers_to_stderr(fake_conn, capsys):
     assert "< HTTP/1.1 200 OK" in captured.err
     assert "< X-Server: test" in captured.err
     assert captured.out == ""
+
+
+class RecordingResponse:
+    def __init__(self, data):
+        self.data = data
+        self.status = 200
+        self.reason = "OK"
+        self.read_sizes = []
+
+    def read(self, amt=-1):
+        self.read_sizes.append(amt)
+        if not self.data:
+            return b""
+        chunk, self.data = self.data[:amt], self.data[amt:]
+        return chunk
+
+    def getheaders(self):
+        return [("Content-Type", "application/octet-stream")]
+
+    def getheader(self, name, default=None):
+        return default
+
+    def close(self):
+        pass
+
+
+def test_body_read_in_chunks(fake_conn):
+    conn, patched_http, patched_https = fake_conn
+    response = RecordingResponse(b"a" * (client_module.CHUNK_SIZE * 3))
+    conn.getresponse.return_value = response
+
+    HttpClient(timeout=5.0).request("GET", "http://example.com/big")
+
+    assert response.read_sizes == [client_module.CHUNK_SIZE] * 4
+
+
+def test_timeout_passed_to_connection(fake_conn):
+    conn, patched_http, patched_https = fake_conn
+
+    HttpClient(timeout=12.5).request("GET", "http://example.com/")
+
+    patched_http.assert_called_once_with("example.com", 80, timeout=12.5)
+
+
+def test_timeout_error_maps_to_exit_code_28(fake_conn):
+    conn, patched_http, patched_https = fake_conn
+    conn.request.side_effect = TimeoutError("timed out")
+
+    with pytest.raises(RequestTimeoutError) as exc_info:
+        HttpClient().request("GET", "http://example.com/")
+
+    assert exc_info.value.exit_code == 28
+
+
+def test_dns_error_maps_to_exit_code_6(fake_conn):
+    conn, patched_http, patched_https = fake_conn
+    conn.request.side_effect = socket.gaierror("getaddrinfo failed")
+
+    with pytest.raises(DnsError) as exc_info:
+        HttpClient().request("GET", "http://no-such-host.example/")
+
+    assert exc_info.value.exit_code == 6
+    assert "no-such-host.example" in str(exc_info.value)
+
+
+def test_connection_refused_maps_to_exit_code_7(fake_conn):
+    conn, patched_http, patched_https = fake_conn
+    conn.request.side_effect = ConnectionRefusedError("refused")
+
+    with pytest.raises(ConnectionFailedError) as exc_info:
+        HttpClient().request("GET", "https://example.com:9999/")
+
+    assert exc_info.value.exit_code == 7
+
+
+def test_ssl_error_maps_to_ssl_exit_code(fake_conn):
+    conn, patched_http, patched_https = fake_conn
+    conn.request.side_effect = ssl.SSLError("certificate verify failed")
+
+    with pytest.raises(SslError) as exc_info:
+        HttpClient().request("GET", "https://example.com/")
+
+    assert exc_info.value.exit_code == 60
+    assert "certificate verify failed" in str(exc_info.value)
+
+
+def test_single_redirect_followed(fake_conn):
+    conn, patched_http, patched_https = fake_conn
+    conn.getresponse.side_effect = [
+        FakeResponse(
+            status=302,
+            reason="Found",
+            headers=[("Location", "/final")],
+            body=b"",
+        ),
+        FakeResponse(status=200, reason="OK", body=b"done"),
+    ]
+
+    result = HttpClient().request(
+        "GET", "http://example.com/start", follow_redirects=True
+    )
+
+    assert result == "done"
+    paths = [call.args[1] for call in conn.request.call_args_list]
+    assert paths == ["/start", "/final"]
+
+
+def test_too_many_redirects_maps_to_exit_code_47(fake_conn):
+    conn, patched_http, patched_https = fake_conn
+    conn.getresponse.return_value = FakeResponse(
+        status=302,
+        reason="Found",
+        headers=[("Location", "/loop")],
+        body=b"",
+    )
+
+    with pytest.raises(TooManyRedirectsError) as exc_info:
+        HttpClient().request(
+            "GET", "http://example.com/start", follow_redirects=True
+        )
+
+    assert exc_info.value.exit_code == 47
+    assert "10" in str(exc_info.value)
+
+
+def test_redirect_without_flag_is_not_followed(fake_conn):
+    conn, patched_http, patched_https = fake_conn
+    conn.getresponse.return_value = FakeResponse(
+        status=302,
+        reason="Found",
+        headers=[("Location", "/final")],
+        body=b"",
+    )
+
+    result = HttpClient().request("GET", "http://example.com/start")
+
+    assert result == ""
+    assert len(conn.request.call_args_list) == 1

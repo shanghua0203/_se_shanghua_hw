@@ -1,7 +1,7 @@
 import http.server
 import subprocess
-import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -10,6 +10,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PYTHON = str(PROJECT_ROOT / ".venv" / "bin" / "python")
 
 SERVER_RESPONSE = "OK from test server"
+FINAL_PAGE = "FINAL PAGE"
+SLOW_DELAY = 5.0
 
 
 class RecordingHandler(http.server.BaseHTTPRequestHandler):
@@ -28,8 +30,11 @@ class RecordingHandler(http.server.BaseHTTPRequestHandler):
         self._handle()
 
     def _handle(self):
-        length = int(self.headers.get("Content-Length") or 0)
-        payload = self.rfile.read(length) if length else b""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            payload = self.rfile.read(length) if length else b""
+        except OSError:
+            return
         self.__class__.requests.append(
             {
                 "method": self.command,
@@ -38,12 +43,33 @@ class RecordingHandler(http.server.BaseHTTPRequestHandler):
                 "body": payload.decode("utf-8", errors="replace"),
             }
         )
-        body = SERVER_RESPONSE.encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+
+        path = self.path.split("?", 1)[0]
+        try:
+            if path.startswith("/redirect"):
+                body = b""
+                self.send_response(302)
+                self.send_header("Location", "/final")
+            elif path.startswith("/loop"):
+                body = b""
+                self.send_response(302)
+                self.send_header("Location", "/loop")
+            elif path.startswith("/slow"):
+                time.sleep(SLOW_DELAY)
+                body = FINAL_PAGE.encode()
+                self.send_response(200)
+            elif path == "/final":
+                body = FINAL_PAGE.encode()
+                self.send_response(200)
+            else:
+                body = SERVER_RESPONSE.encode()
+                self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except OSError:
+            pass
 
     def log_message(self, *args):
         pass
@@ -115,3 +141,31 @@ def test_case4_verbose(server):
     assert any(line.startswith("<") for line in stderr_lines)
     assert "> GET /verbose HTTP/1.1" in result.stderr
     assert "< HTTP/1.1 200 OK" in result.stderr
+
+
+def test_case5_redirect_followed(server):
+    result = run_mycurl(f"{server}/redirect", "-L")
+
+    assert result.returncode == 0
+    assert result.stdout == f"{FINAL_PAGE}\n"
+
+
+def test_case6_redirect_not_followed_without_flag(server):
+    result = run_mycurl(f"{server}/redirect")
+
+    assert result.returncode == 0
+    assert len(RecordingHandler.requests) == 1
+
+
+def test_case7_max_time_times_out(server):
+    result = run_mycurl(f"{server}/slow", "-m", "1")
+
+    assert result.returncode == 28
+    assert "timed out" in result.stderr
+
+
+def test_case8_too_many_redirects(server):
+    result = run_mycurl(f"{server}/loop", "-L")
+
+    assert result.returncode == 47
+    assert "maximum (10) redirects" in result.stderr

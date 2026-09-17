@@ -45,6 +45,20 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print detailed request/response headers",
     )
+    parser.add_argument(
+        "-m",
+        "--max-time",
+        type=float,
+        default=30.0,
+        metavar="SECONDS",
+        help="maximum time allowed for the whole transfer in seconds (default: 30)",
+    )
+    parser.add_argument(
+        "-L",
+        "--location",
+        action="store_true",
+        help="follow redirects (301, 302, 303, 307, 308)",
+    )
     return parser
 
 
@@ -68,7 +82,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"mycurl: error: {exc}", file=sys.stderr)
         return 2
 
-    client = HttpClient(verbose=args.verbose)
+    client = HttpClient(verbose=args.verbose, timeout=args.max_time)
     method = "POST" if args.data is not None and args.request == "GET" else args.request
     try:
         body = client.request(
@@ -77,10 +91,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             headers=headers,
             body=args.data,
             output=args.output,
+            follow_redirects=args.location,
         )
     except HttpClientError as exc:
-        print(f"mycurl: error: {exc}", file=sys.stderr)
-        return 1
+        print(f"mycurl: ({exc.exit_code}) {exc}", file=sys.stderr)
+        return exc.exit_code
 
     if args.output is None:
         print(body)
