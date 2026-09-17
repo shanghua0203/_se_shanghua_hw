@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from .database import engine
 from .models import Base
@@ -32,6 +33,10 @@ app.include_router(enrollment.router)
 # 取得 static/index.html 的完整路徑
 STATIC_DIR = Path(__file__).parent / "static"
 HTML_FILE = STATIC_DIR / "index.html"
+
+# 掛載靜態資料夾，讓瀏覽器能載入 css/style.css 與 js/main.js
+app.mount("/css", StaticFiles(directory=STATIC_DIR / "css"), name="css")
+app.mount("/js", StaticFiles(directory=STATIC_DIR / "js"), name="js")
 
 # 讀取 HTML 檔案的內容（啟動時讀取一次即可）
 html_content = HTML_FILE.read_text(encoding="utf-8")
