@@ -4,7 +4,10 @@
 
 - **後端 API**：使用 FastAPI + SQLAlchemy 實作，提供學生選課功能
 - **前端網頁**：使用原生 HTML + JavaScript（Fetch API），提供選課操作畫面
-- **測試**：使用 pytest 撰寫單元測試，並用 Playwright 做系統整合測試（E2E）
+- **安全認證**：使用 JWT Token 登入與權限驗證，保護選課 API
+- **資料庫遷移**：使用 Alembic 管理資料表結構版本
+- **容器化**：提供 Dockerfile，不用安裝 Python 也能跑
+- **測試**：使用 pytest 撰寫單元測試，並用 Playwright 做系統整合測試（E2E），搭配 GitHub Actions 自動執行
 
 ---
 
@@ -16,6 +19,7 @@
 2. 課程是否存在？
 3. 同一個學生**不能重複選**同一門課？
 4. 課程**名額是否已滿**？
+5. 呼叫的人**是否已登入**？（帶有效的 JWT Token）
 
 全部通過檢查後，這筆選課紀錄才會被寫進資料庫。
 
@@ -30,6 +34,11 @@
 | ORM | SQLAlchemy 2.x | 操作資料庫（不直接寫 SQL） |
 | 資料庫 | SQLite | 輕量、免安裝，適合開發與測試 |
 | 資料驗證 | Pydantic v2 | 檢查 API 請求／回應格式 |
+| 認證 | JWT（pyjwt） | 登入與 Token 權限驗證 |
+| 環境設定 | python-dotenv | 從 `.env` 讀取設定，密碼不外洩 |
+| 資料庫遷移 | Alembic | 版本化資料表結構，升級欄位不刪資料 |
+| 容器化 | Docker | 打包應用程式，免安裝 Python 直接跑 |
+| CI | GitHub Actions | 每次 push 自動跑測試 |
 | API 伺服器 | Uvicorn | 啟動 FastAPI 應用程式 |
 | 測試 | pytest + pytest-playwright | 單元測試與系統整合測試 |
 
@@ -43,22 +52,33 @@
 HW2/
 ├── app/                        # 後端主程式
 │   ├── __init__.py             # 套件標記
-│   ├── main.py                 # FastAPI 主入口（啟動 + 掛載路由 + 回傳前端頁面）
+│   ├── main.py                 # FastAPI 主入口（啟動 + /login + 回傳前端頁面）
 │   ├── database.py             # 資料庫引擎與 Session 設定
 │   ├── models.py               # SQLAlchemy ORM 模型（資料表定義）
 │   ├── schemas.py              # Pydantic 資料驗證模型
+│   ├── auth.py                 # JWT Token 產生與驗證依賴函式
 │   ├── routers/
 │   │   ├── __init__.py
-│   │   └── enrollment.py       # 選課 API（核心業務邏輯）
+│   │   └── enrollment.py       # 選課 API（需 Token 才可呼叫）
 │   └── static/
-│       └── index.html          # 前端選課操作畫面
+│       ├── index.html          # 前端選課操作畫面
+│       ├── css/style.css       # 前端樣式（已從 HTML 獨立出來）
+│       └── js/main.js          # 前端邏輯（登入拿 Token + 呼叫選課 API）
+├── alembic/                    # Alembic 遷移腳本
+│   ├── env.py                  # 設定（引入 models.Base）
+│   └── versions/               # 各版本的遷移腳本
+├── alembic.ini                 # Alembic 設定檔（sqlalchemy.url）
 ├── tests/                      # 測試程式
 │   ├── __init__.py
 │   ├── conftest.py             # pytest 共用設定（測試資料庫 + Playwright 設定）
-│   ├── test_enrollment.py      # 選課 API 單元測試
+│   ├── test_enrollment.py      # 選課 API 單元測試（含登入/401）
 │   └── test_system.py          # 系統整合測試（瀏覽器 E2E）
 ├── requirements.txt            # Python 依賴套件清單
 ├── pyproject.toml              # pytest 設定
+├── .env.example                # 環境變數範例（複製成 .env 使用）
+├── Dockerfile                  # 容器化打包設定
+├── .dockerignore               # 打包時忽略的檔案
+├── .github/workflows/test.yml  # GitHub Actions 自動化測試
 └── app.db                      # SQLite 資料庫（啟動程式後自動產生，已被 .gitignore 忽略）
 ```
 
@@ -111,9 +131,58 @@ students (1) ──────< (N) enrollments (N) >────── (1) cou
 
 ---
 
-## 5. API 說明
+## 5. 資料庫遷移（Alembic）
 
-### 選課：`POST /enrollments/`
+資料表結構由 Alembic 版本管理，以後新增欄位不用刪掉舊資料。
+
+### 常用指令
+
+```bash
+# 套用所有遷移（建立/更新資料表到最新版本）
+alembic upgrade head
+
+# 修改過 models.py 之後，自動產生新的遷移腳本
+alembic revision --autogenerate -m "描述這次的變更"
+
+# 查看目前資料庫在哪個版本
+alembic current
+```
+
+> 初始遷移腳本位於 `alembic/versions/409275526ff3_initial_schema.py`，定義了三張表的完整結構。
+
+---
+
+## 6. API 說明
+
+### 登入：`POST /login`
+
+**Request Body（JSON）**
+```json
+{
+    "username": "admin",
+    "password": "admin"
+}
+```
+
+**成功（HTTP 200）**
+```json
+{
+    "access_token": "eyJhbGciOiJIUzI1NiIs...",
+    "token_type": "bearer"
+}
+```
+
+**失敗（HTTP 401）**：帳號或密碼錯誤
+
+> 目前是簡易示範，只接受固定帳號密碼 `admin / admin`。
+
+### 選課：`POST /enrollments/`（需登入）
+
+呼叫時必須在 `Authorization` 標頭帶上登入拿到的 Token：
+
+```
+Authorization: Bearer <access_token>
+```
 
 **Request Body（JSON）**
 ```json
@@ -137,6 +206,8 @@ students (1) ──────< (N) enrollments (N) >────── (1) cou
 **失敗的情境與狀態碼**
 | 情境 | HTTP 狀態碼 | 錯誤訊息 |
 |------|------------|----------|
+| 未帶 Token | 401 | `未提供認證 Token` |
+| Token 無效或過期 | 401 | `Token 無效或已過期` |
 | 學生不存在 | 404 | `找不到該學生` |
 | 課程不存在 | 404 | `找不到該課程` |
 | 重複選課 | 409 | `該學生已經選過這門課，不可重複選課` |
@@ -145,23 +216,24 @@ students (1) ──────< (N) enrollments (N) >────── (1) cou
 ### 選課的完整檢查流程（`app/routers/enrollment.py`）
 
 ```
-收到請求 → 檢查學生存在 → 檢查課程存在 → 檢查是否重複 → 檢查是否額滿 → 寫入資料庫
-    │            │                 │                │              │              │
-   POST     查 students 表     查 courses 表     查 enrollments  統計 enrolled      commit
-                                            是否有同一位學生    人數是否 >=        （正式寫入）
-                                            選同一門課         max_capacity
+收到請求 → 驗證 JWT Token → 檢查學生存在 → 檢查課程存在 → 檢查是否重複 → 檢查是否額滿 → 寫入資料庫
+    │            │                │                 │                │              │              │
+   POST      驗證 Authorization  查 students 表  查 courses 表  查 enrollments  統計 enrolled    commit
+             Bearer Token                      是否有同一位學生    人數是否 >=    （正式寫入）
+                                              選同一門課         max_capacity
 ```
 
 ---
 
-## 6. 前端說明（`app/static/index.html`）
+## 7. 前端說明（`app/static/index.html`）
 
-頁面是純 HTML + JavaScript，送出選課時流程如下：
+頁面是純 HTML + JavaScript，CSS 與 JS 已拆到 `css/style.css` 與 `js/main.js`。送出選課時流程如下：
 
-1. 攔截表單的 `submit` 事件（避免頁面重新整理）
-2. 用 `parseInt()` 讀取「學生編號」與「課程編號」輸入框的值
-3. 用 **Fetch API** 發出 `POST http://127.0.0.1:8000/enrollments/` 請求
-4. 依照後端回應：
+1. 頁面載入時，JS 會自動呼叫 `POST /login`（`admin/admin`）取得 JWT Token
+2. 攔截表單的 `submit` 事件（避免頁面重新整理）
+3. 用 `parseInt()` 讀取「學生編號」與「課程編號」輸入框的值
+4. 用 **Fetch API** 發出 `POST http://127.0.0.1:8000/enrollments/` 請求，並帶上 `Authorization: Bearer <token>` 標頭
+5. 依照後端回應：
    - `response.ok` 為 true → 顯示綠色「選課成功」訊息
    - 否則 → 顯示紅色錯誤訊息（讀取 `data.detail`）
    - 連線失敗 → 提示「無法連線到後端伺服器」
@@ -170,9 +242,28 @@ students (1) ──────< (N) enrollments (N) >────── (1) cou
 
 ---
 
-## 7. 如何安裝與執行
+## 8. 環境變數設定（.env）
 
-### 7.1 建立虛擬環境並安裝依賴
+不要把資料庫連線資訊寫死在程式碼裡。`app/database.py` 會用 `python-dotenv` 讀取 `.env`，讀不到才用預設值。
+
+```bash
+# 第一次使用：把範例檔複製成 .env 再依需求修改
+cp .env.example .env
+```
+
+`.env.example` 內容：
+
+```ini
+DATABASE_URL=sqlite:///./test.db
+```
+
+> `.env` 已被 `.gitignore` 忽略，不會被上傳到 GitHub，機密資料不會外洩。
+
+---
+
+## 9. 如何安裝與執行
+
+### 9.1 建立虛擬環境並安裝依賴
 
 ```bash
 # 在專案資料夾（HW2）內建立虛擬環境
@@ -188,7 +279,16 @@ pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
-### 7.2 啟動後端伺服器
+### 9.2 建立資料表
+
+```bash
+# 方式一：套用 Alembic 遷移（建議）
+alembic upgrade head
+
+# 方式二：直接啟動伺服器，程式會自動 create_all 建表
+```
+
+### 9.3 啟動後端伺服器
 
 ```bash
 # 確認已在虛擬環境中
@@ -204,12 +304,9 @@ uvicorn app.main:app --reload
 - **API 互動文件（Swagger UI）**：開啟 http://127.0.0.1:8000/docs
 - **API 健康檢查**：開啟 http://127.0.0.1:8000 （會回傳前端頁面）
 
-> 首次啟動時，程式會在 `app/main.py` 執行 `Base.metadata.create_all()`，
-> 自動建立 `app.db` 與三張資料表，不需要手動建表。
-
 ---
 
-## 8. 怎麼「真正的選一次課」？
+## 10. 怎麼「真正的選一次課」？
 
 因為目前沒有寫「新增學生／課程」的 API，資料庫的學生與課程需要用 Python 手動塞入。
 下面示範如何塞入一筆學生與一門課程（在專案資料夾執行）：
@@ -237,34 +334,57 @@ print('資料已寫入，學生的 id=1、課程的 id=1')
 
 1. 瀏覽器打開 http://127.0.0.1:8000/
 2. 學生編號輸入 `1`、課程編號輸入 `1`
-3. 點「選課」→ 畫面上會出現綠色「選課成功」訊息
+3. 點「選課」→ 畫面上會出現綠色「選課成功」訊息（頁面會自動登入並帶 Token）
 
 或者直接用 curl 打 API：
 
 ```bash
+# 步驟 1：登入拿 Token
+TOKEN=$(curl -s -X POST http://127.0.0.1:8000/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin"}' | python -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+
+# 步驟 2：帶上 Token 選課
 curl -X POST http://127.0.0.1:8000/enrollments/ \
      -H "Content-Type: application/json" \
+     -H "Authorization: Bearer $TOKEN" \
      -d '{"student_id": 1, "course_id": 1}'
 ```
 
 ---
 
-## 9. 怎麼跑測試？
+## 11. 用 Docker 跑（不用裝 Python）
 
-### 9.1 只跑單元測試（3 個）
+```bash
+# 在 HW2 資料夾內 build image
+docker build -t course-enrollment .
+
+# 啟動容器，把 8000 埠對應到外面
+docker run -p 8000:8000 course-enrollment
+```
+
+然後瀏覽器打開 http://127.0.0.1:8000/ 即可。
+
+> `.dockerignore` 會排除 `.env`、`*.db`、虛擬環境等不需要的東西，避免把機密與測試檔案打包進去。
+
+---
+
+## 12. 怎麼跑測試？
+
+### 12.1 只跑單元測試
 
 ```bash
 source .venv/bin/activate
 python -m pytest tests/test_enrollment.py -v
 ```
 
-涵蓋 3 個情境：**選課成功**、**重複選課被擋（409）**、**名額額滿被擋（409）**。
+涵蓋情境：**選課成功**、**重複選課被擋（409）**、**名額額滿被擋（409）**、**未登入被擋（401）**、**登入拿 Token**。
 
 > 說明：單元測試使用**記憶體資料庫**（`sqlite://` + StaticPool），
 > 透過 FastAPI 的 `dependency_overrides` 把資料庫換成測試資料庫，
 > 不會碰亂你的 `app.db`。
 
-### 9.2 跑系統整合測試（需先裝 Playwright 瀏覽器）
+### 12.2 跑系統整合測試（需先裝 Playwright 瀏覽器）
 
 ```bash
 source .venv/bin/activate
@@ -280,29 +400,44 @@ python -m pytest tests/test_system.py -v -s
 5. 驗證畫面上出現「選課成功」訊息
 6. 再去查 `app.db`，確認 `enrollments` 表真的有這筆紀錄
 
-### 9.3 一次跑全部測試
+### 12.3 一次跑全部測試
 
 ```bash
 source .venv/bin/activate
 python -m pytest -v
 ```
 
-預期結果：**4 passed**（3 個單元測試 + 1 個系統測試）。
+預期結果：**6 passed**。
+
+### 12.4 GitHub Actions 自動測試
+
+`.github/workflows/test.yml` 會在每次 **push 或 pull request 到 `main`** 時自動：
+
+1. 用最新 Ubuntu 環境
+2. 安裝 Python 3.10
+3. `pip install -r requirements.txt`
+4. 安裝 Playwright 瀏覽器
+5. 執行 `pytest HW2/tests/`
+
+確保程式碼不會被改壞才合併進 `main`。
 
 ---
 
-## 10. 整體架構與資料流
+## 13. 整體架構與資料流
 
 ```
 ┌────────────────────────────┐
 │         瀏覽器（前端）         │
 │   app/static/index.html     │
-│   （HTML + JS + Fetch API）  │
+│   （HTML + CSS + JS）        │
+│   先登入拿 Token → 選課       │
 └────────────┬───────────────┘
-             │ POST /enrollments/  (JSON)
+             │ ① POST /login
+             │ ② POST /enrollments/  (JSON + Bearer Token)
              ▼
 ┌────────────────────────────┐
 │      FastAPI（後端）          │
+│   app/auth.py（JWT 驗證）     │
 │   app/routers/enrollment.py │
 │   └─ 4 個業務檢查            │
 │   ① 學生存在  ② 課程存在      │
@@ -314,27 +449,28 @@ python -m pytest -v
 │        SQLite（app.db）      │
 │   students / courses /      │
 │   enrollments               │
+│   （由 Alembic 管理結構）     │
 └────────────────────────────┘
 ```
 
 ---
 
-## 11. 常見問題（疑難排解）
+## 14. 常見問題（疑難排解）
 
 | 問題 | 解法 |
 |------|------|
 | 前端顯示「無法連線到後端伺服器」 | 確認 uvicorn 有啟動、且埠號是 8000 |
-| 選課一直回傳「找不到該學生／課程」 | 資料庫還是空的，請先餵入學生與課程資料（見第 8 節） |
-| `app.db` 被搞亂了 | 直接刪掉 `app.db`，重新啟動 uvicorn 會自動重建空資料表 |
+| 選課一直回傳 401 | 重新整理頁面（讓自動登入再跑一次）或確認 Token 沒過期 |
+| 選課一直回傳「找不到該學生／課程」 | 資料庫還是空的，請先餵入學生與課程資料（見第 10 節） |
+| `app.db` 被搞亂了 | 直接刪掉 `app.db`，重新執行 `alembic upgrade head` 重建資料表 |
 | 系統測試報 `no-sandbox` 相關錯誤 | 已內建 `--no-sandbox` 參數，通常不需要處理 |
 | Chromium 沒下載 | 執行 `python -m playwright install chromium` |
 
 ---
 
-## 12. 後續可擴充方向（Roadmap）
+## 15. 後續可擴充方向（Roadmap）
 
 - 新增「新增學生／課程／查詢課程清單」的 CRUD API
-- 使用 **Alembic** 做資料庫版本遷移（目前用 `create_all`，只適合開發）
-- 實作 JWT 登入認證與角色權限（學生／教務）
+- JWT 登入改用資料庫裡的真實使用者，並加上角色權限（學生／教務）
 - 增加「退選」「成績輸入」功能
-- 部署時資料庫改用 PostgreSQL，並加上 `.env` 設定檔
+- 部署時資料庫改用 PostgreSQL，連線資訊放入 `.env`
