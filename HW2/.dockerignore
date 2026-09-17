@@ -1,0 +1,37 @@
+# ============================================================
+# .dockerignore — 打包建置時排除不需要的檔案/資料夾
+# ============================================================
+
+# 版本控制
+.git
+.gitignore
+
+# Python 快取與虛擬環境
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# 環境變數（含機密資訊，絕對不能進 image）
+.env
+.env.*
+
+# 資料庫檔案（由程式執行時自動產生）
+app.db
+*.db
+*.db-journal
+
+# 測試與靜態分析
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 建置與暫存檔
+*.egg-info/
+dist/
+build/
+*.log
+*.tmp
