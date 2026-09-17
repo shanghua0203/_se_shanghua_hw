@@ -1,13 +1,22 @@
 # ============================================================
 # test_enrollment.py — 選課功能的單元測試
-# 測試三種情境：
+# 測試四種情境：
 #   1. 選課成功
 #   2. 重複選課被擋
 #   3. 名額額滿被擋
+#   4. 不帶 Token 呼叫選課 API 會被拒絕（401）
 # ============================================================
 
+from app.auth import create_access_token
 from app.models import Course, Student
 from tests.conftest import TestSessionLocal
+
+
+# 取得一個有效的測試用 Token
+TEST_TOKEN = create_access_token("admin")
+
+# 所有選課 API 請求都需要帶上的 Authorization header
+AUTH_HEADER = {"Authorization": f"Bearer {TEST_TOKEN}"}
 
 
 # ----------------------------------------------------------
@@ -89,6 +98,7 @@ def test_enroll_success(client):
             "student_id": student.id,  # 傳入學生的資料庫 id
             "course_id": course.id,  # 傳入課程的資料庫 id
         },
+        headers=AUTH_HEADER,  # 帶上 JWT Token
     )
 
     # 驗證回應狀態碼為 201（成功建立）
@@ -119,6 +129,7 @@ def test_enroll_duplicate(client):
     response1 = client.post(
         "/enrollments/",
         json={"student_id": student.id, "course_id": course.id},
+        headers=AUTH_HEADER,
     )
     assert response1.status_code == 201, "第一次選課應該成功（201）"
 
@@ -126,6 +137,7 @@ def test_enroll_duplicate(client):
     response2 = client.post(
         "/enrollments/",
         json={"student_id": student.id, "course_id": course.id},
+        headers=AUTH_HEADER,
     )
 
     # 驗證第二次選課被擋，回傳 409 Conflict
@@ -165,6 +177,7 @@ def test_enroll_full(client):
     response1 = client.post(
         "/enrollments/",
         json={"student_id": student1.id, "course_id": course.id},
+        headers=AUTH_HEADER,
     )
     assert response1.status_code == 201, "第一個學生選課應該成功（201）"
 
@@ -172,6 +185,7 @@ def test_enroll_full(client):
     response2 = client.post(
         "/enrollments/",
         json={"student_id": student2.id, "course_id": course.id},
+        headers=AUTH_HEADER,
     )
 
     # 驗證第二個學生選課被擋，回傳 409 Conflict
@@ -179,3 +193,49 @@ def test_enroll_full(client):
 
     # 驗證錯誤訊息包含「名額已滿」
     assert "名額已滿" in response2.json()["detail"]
+
+
+# ==================================================
+# 測試 4：不帶 Token 呼叫選課 API 會被拒絕
+# ==================================================
+def test_enroll_without_token(client):
+    """
+    測試 JWT 權限驗證。
+    前提條件：資料庫中有學生和課程。
+    預期結果：不帶 Authorization 標頭呼叫選課 API → HTTP 401（Unauthorized）。
+    """
+    db = next(get_test_db())
+
+    # 建立測試用的學生和課程
+    student, course = create_test_data(db)
+
+    # 沒有帶 Token，直接呼叫選課 API
+    response = client.post(
+        "/enrollments/",
+        json={"student_id": student.id, "course_id": course.id},
+    )
+
+    # 驗證被拒絕，回傳 401
+    assert response.status_code == 401, f"預期狀態碼 401，但得到 {response.status_code}"
+
+
+# ==================================================
+# 測試 5：登入 /login 可以拿到 Token
+# ==================================================
+def test_login_get_token(client):
+    """
+    測試登入 API。
+    預期結果：輸入 admin / admin → 回傳 200，且帶有 access_token。
+    """
+    response = client.post(
+        "/login",
+        json={"username": "admin", "password": "admin"},
+    )
+
+    # 驗證登入成功
+    assert response.status_code == 200, f"預期狀態碼 200，但得到 {response.status_code}"
+
+    # 驗證回應中帶有 access_token
+    data = response.json()
+    assert data["token_type"] == "bearer"
+    assert "access_token" in data and data["access_token"]

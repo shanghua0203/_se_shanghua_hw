@@ -7,6 +7,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from ..auth import get_current_user
 from ..database import SessionLocal
 from ..models import Course, Enrollment, Student
 from ..schemas import EnrollmentRequest, EnrollmentResponse
@@ -38,9 +39,11 @@ def get_db():
 def enroll_course(
     request: EnrollmentRequest,
     db: Session = Depends(get_db),
+    current_user: str = Depends(get_current_user),
 ):
     """
     學生選課功能：
+    0. 先驗證使用者有帶有效的 JWT Token（否則回傳 401）
     1. 檢查學生是否存在
     2. 檢查課程是否存在
     3. 檢查是否重複選課

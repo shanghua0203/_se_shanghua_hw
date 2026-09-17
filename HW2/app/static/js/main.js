@@ -32,11 +32,36 @@
 // 後端 API 的網址
 // 如果後端不是跑在預設的 8000 埠號，請改成對應的網址
 const API_URL = "http://127.0.0.1:8000/enrollments/";
+const LOGIN_URL = "http://127.0.0.1:8000/login";
+
+// 儲存登入後取得的 JWT Token，選課時需要帶上
+let authToken = null;
 
 // 取得頁面上的元素，方便後續操作
 const form = document.getElementById("enrollForm");       // 表單
 const messageBox = document.getElementById("messageBox"); // 提示訊息區域
 const submitBtn = document.getElementById("submitBtn");   // 送出按鈕
+
+// ----------------------------------------------------------
+// 頁面載入時自動登入（admin / admin），取得 JWT Token
+// 選課 API 需要帶 Token 才能使用
+// ----------------------------------------------------------
+async function initAuth() {
+    try {
+        const response = await fetch(LOGIN_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: "admin", password: "admin" }),
+        });
+        if (response.ok) {
+            const data = await response.json();
+            authToken = data.access_token;
+        }
+    } catch (error) {
+        // 登入失敗時，選課按鈕照常可用，送出時會顯示錯誤訊息
+    }
+}
+initAuth();
 
 // ----------------------------------------------------------
 // 監聽表單的 submit 事件
@@ -63,20 +88,26 @@ form.addEventListener("submit", async function(event) {
     // 先隱藏之前的提示訊息
     messageBox.style.display = "none";
 
-    try {
-        // ----------------------------------------------------------
-        // 使用 Fetch API 發出 POST 請求到後端
-        // ----------------------------------------------------------
-        const response = await fetch(API_URL, {
-            method: "POST",                    // 使用 POST 方法
-            headers: {
+        try {
+            // ----------------------------------------------------------
+            // 使用 Fetch API 發出 POST 請求到後端
+            // ----------------------------------------------------------
+            const headers = {
                 "Content-Type": "application/json",  // 告訴後端我們送的是 JSON
-            },
-            body: JSON.stringify({              // 把 JavaScript 物件轉成 JSON 字串
-                student_id: studentId,          // 學生的資料庫 id
-                course_id: courseId,            // 課程的資料庫 id
-            }),
-        });
+            };
+            // 如果有 token，帶上 Authorization 標頭
+            if (authToken) {
+                headers["Authorization"] = "Bearer " + authToken;
+            }
+
+            const response = await fetch(API_URL, {
+                method: "POST",                    // 使用 POST 方法
+                headers: headers,
+                body: JSON.stringify({              // 把 JavaScript 物件轉成 JSON 字串
+                    student_id: studentId,          // 學生的資料庫 id
+                    course_id: courseId,            // 課程的資料庫 id
+                }),
+            });
 
         // 把後端回傳的 JSON 資料解析成 JavaScript 物件
         const data = await response.json();

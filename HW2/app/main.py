@@ -6,10 +6,13 @@
 
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from pydantic import BaseModel
+
+from .auth import create_access_token
 from .database import engine
 from .models import Base
 from .routers import enrollment
@@ -28,6 +31,47 @@ Base.metadata.create_all(bind=engine)
 # 註冊路由（Router）
 # 把 enrollment 模組中定義的 API 路由掛載到主 app 上
 app.include_router(enrollment.router)
+
+
+# ----------------------------------------------------------
+# 登入用的 Pydantic Schema
+# ----------------------------------------------------------
+class LoginRequest(BaseModel):
+    """登入請求：只需要帳號與密碼。"""
+    username: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    """登入成功後回傳 Token。"""
+    access_token: str  # JWT Token
+    token_type: str  # 固定為 "bearer"
+
+
+# ----------------------------------------------------------
+# POST /login — 登入並取得 Token
+# 為了簡單示範，目前只接受一組固定帳號密碼：admin / admin。
+# ----------------------------------------------------------
+@app.post("/login", response_model=TokenResponse)
+def login(request: LoginRequest):
+    """
+    驗證帳號密碼，正確就發給一顆 JWT Token。
+    之後呼叫需要認證的 API（例如選課），
+    在 Authorization 標頭帶上「Bearer <token>」即可。
+    """
+    # 帳號密碼都正確 → 發 Token
+    if request.username == "admin" and request.password == "admin":
+        return TokenResponse(
+            access_token=create_access_token(request.username),
+            token_type="bearer",
+        )
+
+    # 帳號或密碼錯誤 → 拒絕登入
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="帳號或密碼錯誤",
+    )
+
 
 # ---- 讀取前端 HTML 檔案的內容 ----
 # 取得 static/index.html 的完整路徑
