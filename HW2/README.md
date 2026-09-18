@@ -62,7 +62,9 @@ HW2/
 │   ├── seed.py                 # 建立預設教務帳號 admin/admin（密碼 bcrypt 雜湊）
 │   ├── routers/
 │   │   ├── __init__.py
-│   │   └── enrollment.py       # 選課 API + 教務限定的 GET /enrollments/list
+│   │   ├── enrollment.py       # 選課 API + 教務限定的 GET /enrollments/list
+│   │   ├── students.py         # 新增學生 API（教務限定）
+│   │   └── courses.py          # 新增課程（教務限定）+ 查詢課程清單（登入即可）
 │   └── static/
 │       ├── index.html          # 前端選課操作畫面
 │       ├── css/style.css       # 前端樣式（已從 HTML 獨立出來）
@@ -77,6 +79,8 @@ HW2/
 │   ├── test_auth.py            # 密碼雜湊（bcrypt）+ User 模型單元測試
 │   ├── test_enrollment.py      # 選課 API 單元測試（含登入/401）
 │   ├── test_roles.py           # 角色權限（學生/教務）單元測試
+│   ├── test_students.py        # 新增學生 API 單元測試
+│   ├── test_courses.py         # 新增課程 + 查詢課程清單 API 單元測試
 │   └── test_system.py          # 系統整合測試（瀏覽器 E2E）
 ├── requirements.txt            # Python 依賴套件清單
 ├── pyproject.toml              # pytest 設定
@@ -280,11 +284,87 @@ Authorization: Bearer <access_token>
 
 > 選課 `POST /enrollments/` 則維持「任何已登入者」皆可用（學生與教務都可以選課）。
 
+### 新增學生：`POST /students/`（教務限定）
+
+建立新的學生資料（學號 / email 不可重複）。
+
+**Request Body（JSON）**
+```json
+{
+    "student_id": "S111210505",
+    "name": "王小明",
+    "email": "s111210505@example.com",
+    "department": "資訊工程學系",
+    "enrollment_year": 2024
+}
+```
+
+**成功（HTTP 201）**：回傳建立好的學生資料（含自動產生的 `id`）。
+
+**失敗的情境與狀態碼**
+| 情境 | HTTP 狀態碼 | 錯誤訊息 |
+|------|------------|----------|
+| 未帶 Token | 401 | `未提供認證 Token` |
+| 學生角色 | 403 | `您沒有權限新增學生` |
+| 學號重複 | 409 | `該學號已存在，不可重複新增` |
+| email 重複 | 409 | `該 email 已被使用，不可重複` |
+
+### 新增課程：`POST /courses/`（教務限定）
+
+建立新的課程（課程代碼不可重複）。
+
+**Request Body（JSON）**
+```json
+{
+    "course_code": "CS101",
+    "name": "程式設計導論",
+    "credit": 3,
+    "max_capacity": 60,
+    "teacher_name": "李教授",
+    "semester": "112-2"
+}
+```
+
+**成功（HTTP 201）**：回傳建立好的課程資料（含自動產生的 `id`）。
+
+**失敗的情境與狀態碼**
+| 情境 | HTTP 狀態碼 | 錯誤訊息 |
+|------|------------|----------|
+| 未帶 Token | 401 | `未提供認證 Token` |
+| 學生角色 | 403 | `您沒有權限新增課程` |
+| 課程代碼重複 | 409 | `該課程代碼已存在，不可重複新增` |
+
+### 查詢課程清單：`GET /courses/`（登入即可）
+
+回傳全部課程的清單，學生與教務皆可觀看（方便選課前先查有哪些課）。
+
+**成功（HTTP 200）**
+```json
+[
+    {
+        "id": 1,
+        "course_code": "CS101",
+        "name": "程式設計導論",
+        "credit": 3,
+        "max_capacity": 60,
+        "teacher_name": "李教授",
+        "semester": "112-2"
+    }
+]
+```
+
+**失敗的情境與狀態碼**
+| 情境 | HTTP 狀態碼 | 錯誤訊息 |
+|------|------------|----------|
+| 未帶 Token | 401 | `未提供認證 Token` |
+
 ---
 
 ## 7. 前端說明（`app/static/index.html`）
 
-頁面是純 HTML + JavaScript，CSS 與 JS 已拆到 `css/style.css` 與 `js/main.js`。送出選課時流程如下：
+頁面是純 HTML + JavaScript，CSS 與 JS 已拆到 `css/style.css` 與 `js/main.js`。畫面分左右兩欄：
+
+- **左欄（選課）**：原選課表單。送出選課時流程如下：
 
 1. 頁面載入時，JS 會自動呼叫 `POST /login`（`admin/admin`）取得 JWT Token
 2. 攔截表單的 `submit` 事件（避免頁面重新整理）
@@ -294,6 +374,11 @@ Authorization: Bearer <access_token>
    - `response.ok` 為 true → 顯示綠色「選課成功」訊息
    - 否則 → 顯示紅色錯誤訊息（讀取 `data.detail`）
    - 連線失敗 → 提示「無法連線到後端伺服器」
+
+- **右欄（管理功能）**：教務專用的操作區。
+  1. **新增學生**：填寫學號／姓名／Email／科系／入學年份後送出 → `POST /students/`，成功顯示綠色訊息。
+  2. **新增課程**：填寫課程代碼／名稱／學分／容量／教師／學期後送出 → `POST /courses/`，成功顯示綠色訊息，並自動更新課程清單。
+  3. **課程清單**：頁面載入時自動呼叫 `GET /courses/` 顯示目前所有課程；也可以用「更新課程清單」按鈕手動重新載入。
 
 > 注意：前端 JavaScript 寫死呼叫 `http://127.0.0.1:8000/enrollments/`，所以**後端必須跑在 8000 埠**。
 
@@ -371,8 +456,8 @@ uvicorn app.main:app --reload
 
 ## 10. 怎麼「真正的選一次課」？
 
-因為目前沒有寫「新增學生／課程」的 API，資料庫的學生與課程需要用 Python 手動塞入。
-下面示範如何塞入一筆學生與一門課程（在專案資料夾執行）：
+學生與課程現在可以直接用「前端右欄的管理功能」建立（`POST /students/`、`POST /courses/`），
+也可以用下面的指令從後端塞入一筆學生與一門課程（在專案資料夾執行）：
 
 ```bash
 source .venv/bin/activate
@@ -393,26 +478,38 @@ print('資料已寫入，學生的 id=1、課程的 id=1')
 "
 ```
 
-接著：
+或者在瀏覽器打開 http://127.0.0.1:8000/ 後：
 
-1. 瀏覽器打開 http://127.0.0.1:8000/
-2. 學生編號輸入 `1`、課程編號輸入 `1`
+1. 在右欄「新增學生」「新增課程」表單分別輸入資料，建立學生與課程
+2. 左欄學生編號輸入學生的資料庫 `id`（第 1 位就是 `1`）、課程編號輸入 `1`
 3. 點「選課」→ 畫面上會出現綠色「選課成功」訊息（頁面會自動登入並帶 Token）
 
 或者直接用 curl 打 API：
 
 ```bash
-# 步驟 1：登入拿 Token
+# 步驟 1：登入拿 Token（教務）
 TOKEN=$(curl -s -X POST http://127.0.0.1:8000/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin"}' | python -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
 
-# 步驟 2：帶上 Token 選課
+# 步驟 2：新增一門課程（選課前至少要有課程資料）
+curl -X POST http://127.0.0.1:8000/courses/ \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer $TOKEN" \
+     -d '{"course_code":"CS101","name":"程式設計導論","credit":3,"max_capacity":60,"teacher_name":"李教授","semester":"112-2"}'
+
+# 步驟 3：查課程清單，確認課程的 id
+curl -X GET http://127.0.0.1:8000/courses/ \
+     -H "Authorization: Bearer $TOKEN"
+
+# 步驟 4：帶上 Token 選課
 curl -X POST http://127.0.0.1:8000/enrollments/ \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer $TOKEN" \
      -d '{"student_id": 1, "course_id": 1}'
 ```
+
+> 若還沒有任何學生資料，可以先用前端右欄或 `POST /students/` API 建立一位學生。
 
 ---
 
@@ -441,14 +538,18 @@ source .venv/bin/activate
 python -m pytest tests/test_auth.py -v         # 密碼雜湊（bcrypt）+ User 模型
 python -m pytest tests/test_enrollment.py -v   # 選課 API（含登入 / 401）
 python -m pytest tests/test_roles.py -v        # 角色權限（學生 / 教務）
-python -m pytest tests/test_auth.py tests/test_enrollment.py tests/test_roles.py -v   # 全部單元測試
+python -m pytest tests/test_students.py -v     # 新增學生 API（教務限定）
+python -m pytest tests/test_courses.py -v      # 新增課程 + 查詢課程清單 API
+python -m pytest tests/test_auth.py tests/test_enrollment.py tests/test_roles.py tests/test_students.py tests/test_courses.py -v   # 全部單元測試
 ```
 
-涵蓋情境（共 15 個）：
+涵蓋情境（共 26 個）：
 
 - `test_auth.py`（5 個）：密碼不存明文、正確／錯誤密碼驗證、不合法雜湊不回傳例外、User 模型存雜湊
 - `test_enrollment.py`（5 個）：選課成功、重複選課被擋（409）、名額額滿被擋（409）、未登入被擋（401）、登入拿 Token
 - `test_roles.py`（5 個）：`/enrollments/list` 未登入 401、學生 403、教務 200；選課 POST 學生／教務皆可用
+- `test_students.py`（5 個）：新增學生成功、學號重複被擋（409）、email 重複被擋（409）、未登入被擋（401）、學生角色被擋（403）
+- `test_courses.py`（6 個）：新增課程成功、課程代碼重複被擋（409）、未登入新增被擋（401）、學生角色新增被擋（403）、登入可查課程清單、未登入查清單被擋（401）
 
 > 說明：單元測試使用**記憶體資料庫**（`sqlite://` + StaticPool），
 > 透過 FastAPI 的 `dependency_overrides` 把資料庫換成測試資料庫，
@@ -461,14 +562,13 @@ source .venv/bin/activate
 python -m pytest tests/test_system.py -v -s
 ```
 
-模擬真實學生操作：
+模擬真實操作（共 2 支 E2E，都走「真的瀏覽器 + 真的資料庫」）：
 
 1. 清空並重建資料庫、塞入測試資料
 2. 在背景啟動「真的」uvicorn 伺服器（綁定 127.0.0.1:8000）
 3. 用無頭 Chromium 打開前端網頁
-4. 輸入學生編號與課程編號 → 點「選課」
-5. 驗證畫面上出現「選課成功」訊息
-6. 再去查 `app.db`，確認 `enrollments` 表真的有這筆紀錄
+4. **E2E 一（選課）**：輸入學生編號與課程編號 → 點「選課」→ 驗證畫面上出現「選課成功」→ 查 `app.db` 確認 `enrollments` 表有這筆紀錄
+5. **E2E 二（管理功能）**：確認課程清單顯示既有課程 → 用右欄表單新增學生／課程 → 驗證綠色成功訊息 → 確認課程清單自動更新 → 查 `app.db` 確認 `students`／`courses` 表都有寫入
 
 ### 12.3 一次跑全部測試
 
@@ -477,7 +577,7 @@ source .venv/bin/activate
 python -m pytest -v
 ```
 
-預期結果：**16 passed**（15 個單元測試 + 1 個系統整合測試）。
+預期結果：**28 passed**（26 個單元測試 + 2 個系統整合測試）。
 
 ### 12.4 GitHub Actions 自動測試
 
@@ -545,7 +645,7 @@ python -m pytest -v
 
 ## 15. 後續可擴充方向（Roadmap）
 
-- 新增「新增學生／課程／查詢課程清單」的 CRUD API
+- ~~新增「新增學生／課程／查詢課程清單」的 CRUD API~~ ✅ 已完成
 - ~~JWT 登入改用資料庫裡的真實使用者，並加上角色權限（學生／教務）~~ ✅ 已完成
 - 增加「退選」「成績輸入」功能
 - 部署時資料庫改用 PostgreSQL，連線資訊放入 `.env`

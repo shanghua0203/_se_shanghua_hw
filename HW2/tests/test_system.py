@@ -232,3 +232,114 @@ def test_system_enrollment_flow(live_server, page):
     # ---- 情境 5：去資料庫確認資料真的有寫進去 ----
     exists = _check_enrollment_exists(student_id, course_id)
     assert exists, "資料庫中找不到這筆選課紀錄，代表選課沒有真正寫入資料庫"
+
+
+# ==================================================
+# 輔助函數：檢查資料庫裡有沒有這筆學生紀錄
+# ----------------------------------------------------------
+def _check_student_exists(student_id):
+    """
+    用 SQLAlchemy 去查 app.db：
+    如果有找到「學號」相符的學生，回傳 True，否則 False。
+    """
+    db = SessionLocal()
+    try:
+        record = (
+            db.query(Student)  # 查學生表
+            .filter(Student.student_id == student_id)  # 條件：學號相符
+            .first()
+        )
+        return record is not None
+    finally:
+        db.close()
+
+
+# ==================================================
+# 輔助函數：檢查資料庫裡有沒有這門課程紀錄
+# ----------------------------------------------------------
+def _check_course_exists(course_code):
+    """
+    用 SQLAlchemy 去查 app.db：
+    如果有找到「課程代碼」相符的課程，回傳 True，否則 False。
+    """
+    db = SessionLocal()
+    try:
+        record = (
+            db.query(Course)  # 查課程表
+            .filter(Course.course_code == course_code)  # 條件：課程代碼相符
+            .first()
+        )
+        return record is not None
+    finally:
+        db.close()
+
+
+# ==================================================
+# 主測試：模擬教務在瀏覽器上「新增學生」「新增課程」「查看課程清單」
+# ==================================================
+def test_system_manage_courses_flow(live_server, page):
+    """
+    【測試情境】模擬教務人員操作的完整流程：
+      1. 用瀏覽器打開前端網頁（自動登入 admin）
+      2. 確認課程清單有顯示原本就存在的測試課程 CS101
+      3. 填寫並送出「新增學生」，確認出現綠字成功訊息
+      4. 填寫並送出「新增課程」（CS102），確認出現綠字成功訊息
+      5. 確認課程清單自動更新、出現新課程
+      6. 去資料庫確認學生與課程真的都有寫進去
+    """
+    # ---- 情境 1：打開前端網頁 ----
+    page.goto(f"{BASE_URL}/")
+    assert "校務選課系統" in page.title(), "網頁標題不對，可能頁面沒載入成功"
+
+    # 頁面載入後會自動登入並載入課程清單（顯示「載入中...」之後再被替換）
+    page.wait_for_function(
+        "() => document.getElementById('courseList').textContent !== '載入中...'",
+        timeout=10000,
+    )
+
+    # ---- 情境 2：確認課程清單有顯示原本就存在的 CS101 ----
+    course_list_text = page.locator("#courseList").inner_text()
+    assert "CS101" in course_list_text, f"課程清單沒有顯示 CS101，實際內容：{course_list_text}"
+
+    # ---- 情境 3：新增學生 ----
+    page.fill("#newStudentId", "S222222222")  # 學號
+    page.fill("#studentName", "陳小華")  # 姓名
+    page.fill("#studentEmail", "s222222222@example.com")  # Email
+    page.fill("#studentDept", "資訊工程學系")  # 科系
+    page.fill("#studentYear", "2025")  # 入學年份
+    page.click("#studentSubmitBtn")  # 點「新增學生」按鈕
+
+    # 等待提示訊息出現，並驗證是綠色成功訊息
+    page.wait_for_function(
+        "() => (document.getElementById('studentMessage').textContent || '').includes('新增學生成功')",
+        timeout=10000,
+    )
+    print(f"\n[系統測試] 新增學生訊息：{page.locator('#studentMessage').inner_text()}")
+
+    # ---- 情境 4：新增課程（CS102） ----
+    page.fill("#courseCode", "CS102")  # 課程代碼
+    page.fill("#courseName", "資料庫系統")  # 課程名稱
+    page.fill("#courseCredit", "3")  # 學分
+    page.fill("#courseCapacity", "60")  # 最大容量
+    page.fill("#courseTeacher", "張教授")  # 授課教師
+    page.fill("#courseSemester", "112-2")  # 學期
+    page.click("#courseSubmitBtn")  # 點「新增課程」按鈕
+
+    # 等待提示訊息出現，並驗證是綠色成功訊息
+    page.wait_for_function(
+        "() => (document.getElementById('courseMessage').textContent || '').includes('新增課程成功')",
+        timeout=10000,
+    )
+    print(f"\n[系統測試] 新增課程訊息：{page.locator('#courseMessage').inner_text()}")
+
+    # ---- 情境 5：課程清單應該自動更新、出現 CS102 ----
+    page.wait_for_function(
+        "() => (document.getElementById('courseList').textContent || '').includes('CS102')",
+        timeout=10000,
+    )
+    print(f"\n[系統測試] 更新後的課程清單：{page.locator('#courseList').inner_text()}")
+    assert "CS102" in page.locator("#courseList").inner_text()
+
+    # ---- 情境 6：去資料庫確認學生與課程真的有寫進去 ----
+    assert _check_student_exists("S222222222"), "資料庫中找不到這筆學生紀錄"
+    assert _check_course_exists("CS102"), "資料庫中找不到這門課程紀錄"

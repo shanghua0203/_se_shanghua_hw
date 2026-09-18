@@ -31,38 +31,127 @@
         <h1>校務選課系統</h1>
         <p class="subtitle">填入學生編號與課程編號，即可完成選課</p>
 
-        <!-- 選課表單 -->
-        <form id="enrollForm">
-            <!-- 學生編號欄位 -->
-            <div class="form-group">
-                <label for="studentId">學生編號（ID）</label>
-                <input
-                    type="number"
-                    id="studentId"
-                    name="studentId"
-                    placeholder="例：1"
-                    required
-                >
-            </div>
+        <!-- 兩欄排版：左邊是選課，右邊是管理功能 -->
+        <div class="section-grid">
 
-            <!-- 課程編號欄位 -->
-            <div class="form-group">
-                <label for="courseId">課程編號（ID）</label>
-                <input
-                    type="number"
-                    id="courseId"
-                    name="courseId"
-                    placeholder="例：1"
-                    required
-                >
-            </div>
+            <!-- ==================== 左欄：選課 ==================== -->
+            <section class="panel">
+                <h2 class="panel-title">選課</h2>
 
-            <!-- 送出按鈕 -->
-            <button type="submit" id="submitBtn">選課</button>
-        </form>
+                <!-- 選課表單 -->
+                <form id="enrollForm">
+                    <!-- 學生編號欄位 -->
+                    <div class="form-group">
+                        <label for="studentId">學生編號（ID）</label>
+                        <input
+                            type="number"
+                            id="studentId"
+                            name="studentId"
+                            placeholder="例：1"
+                            required
+                        >
+                    </div>
 
-        <!-- 提示訊息區域：成功或失敗時會在這裡顯示訊息 -->
-        <div id="messageBox" class="message"></div>
+                    <!-- 課程編號欄位 -->
+                    <div class="form-group">
+                        <label for="courseId">課程編號（ID）</label>
+                        <input
+                            type="number"
+                            id="courseId"
+                            name="courseId"
+                            placeholder="例：1"
+                            required
+                        >
+                    </div>
+
+                    <!-- 送出按鈕 -->
+                    <button type="submit" id="submitBtn">選課</button>
+                </form>
+
+                <!-- 提示訊息區域：成功或失敗時會在這裡顯示訊息 -->
+                <div id="messageBox" class="message"></div>
+            </section>
+
+            <!-- ==================== 右欄：管理功能 ==================== -->
+            <section class="panel">
+
+                <!-- ---------- 新增學生 ---------- -->
+                <h2 class="panel-title">新增學生</h2>
+                <form id="studentForm">
+                    <div class="form-group">
+                        <label for="newStudentId">學號</label>
+                        <input type="text" id="newStudentId" name="student_id"
+                               placeholder="例：S111210505" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="studentName">姓名</label>
+                        <input type="text" id="studentName" name="name"
+                               placeholder="例：王小明" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="studentEmail">Email</label>
+                        <input type="email" id="studentEmail" name="email"
+                               placeholder="例：s111210505@example.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="studentDept">科系</label>
+                        <input type="text" id="studentDept" name="department"
+                               placeholder="例：資訊工程學系" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="studentYear">入學年份</label>
+                        <input type="number" id="studentYear" name="enrollment_year"
+                               placeholder="例：2024" required>
+                    </div>
+                    <button type="submit" id="studentSubmitBtn">新增學生</button>
+                </form>
+                <div id="studentMessage" class="message"></div>
+
+                <!-- ---------- 新增課程 ---------- -->
+                <h2 class="panel-title">新增課程</h2>
+                <form id="courseForm">
+                    <div class="form-group">
+                        <label for="courseCode">課程代碼</label>
+                        <input type="text" id="courseCode" name="course_code"
+                               placeholder="例：CS101" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="courseName">課程名稱</label>
+                        <input type="text" id="courseName" name="name"
+                               placeholder="例：程式設計導論" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="courseCredit">學分</label>
+                        <input type="number" id="courseCredit" name="credit"
+                               placeholder="例：3" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="courseCapacity">最大容量</label>
+                        <input type="number" id="courseCapacity" name="max_capacity"
+                               value="60" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="courseTeacher">授課教師</label>
+                        <input type="text" id="courseTeacher" name="teacher_name"
+                               placeholder="例：李教授" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="courseSemester">學期</label>
+                        <input type="text" id="courseSemester" name="semester"
+                               placeholder="例：112-2" required>
+                    </div>
+                    <button type="submit" id="courseSubmitBtn">新增課程</button>
+                </form>
+                <div id="courseMessage" class="message"></div>
+
+                <!-- ---------- 課程清單 ---------- -->
+                <h2 class="panel-title">課程清單</h2>
+                <div id="courseList" class="course-list"></div>
+                <button type="button" id="refreshCoursesBtn"
+                        onclick="loadCourseList()">更新課程清單</button>
+            </section>
+
+        </div>
     </div>
 
     <script src="js/main.js"></script>

@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from .auth import create_access_token, verify_password
 from .database import engine
 from .models import Base, User
-from .routers import enrollment
+from .routers import courses, enrollment, students
 from .routers.enrollment import get_db
 
 # 建立 FastAPI 實例，設定專案的基本資訊
@@ -33,6 +33,10 @@ Base.metadata.create_all(bind=engine)
 # 註冊路由（Router）
 # 把 enrollment 模組中定義的 API 路由掛載到主 app 上
 app.include_router(enrollment.router)
+# 把 students 模組中定義的 API 路由掛載到主 app 上
+app.include_router(students.router)
+# 把 courses 模組中定義的 API 路由掛載到主 app 上
+app.include_router(courses.router)
 
 
 # ----------------------------------------------------------
