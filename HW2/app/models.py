@@ -1,7 +1,7 @@
 # ============================================================
 # models.py — SQLAlchemy ORM 模型定義
 # 這個檔案負責定義資料庫的「表格結構」，
-# 用 Python 類別來描述 students、courses、enrollments 三張表。
+# 用 Python 類別來描述 students、courses、enrollments、users 四張表。
 # ============================================================
 
 from datetime import datetime
@@ -21,6 +21,25 @@ from sqlalchemy.orm import DeclarativeBase, relationship
 # 所有 ORM 模型的基礎類別，所有 Model 都要繼承它
 class Base(DeclarativeBase):
     pass
+
+
+# ----------------------------------------------------------
+# User 模型 — 對應資料庫中的 users 表
+# 用來存放登入帳號：教務（admin）與學生（student）都記在這裡。
+# 密碼一律只存「bcrypt 雜湊」，絕對不存明文。
+# ----------------------------------------------------------
+class User(Base):
+    __tablename__ = "users"  # 資料庫中實際的表名
+
+    id = Column(Integer, primary_key=True, autoincrement=True)  # 主鍵，自動遞增
+    username = Column(String(50), unique=True, nullable=False)  # 帳號，不可重複
+    password_hash = Column(String(128), nullable=False)  # 密碼雜湊（bcrypt）
+    role = Column(String(10), nullable=False)  # 角色：admin（教務）/ student（學生）
+    is_active = Column(Boolean, default=True, nullable=False)  # 帳號是否啟用
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # 建立時間
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False,
+    )  # 更新時間
 
 
 # ----------------------------------------------------------

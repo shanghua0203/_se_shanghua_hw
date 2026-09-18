@@ -7,7 +7,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from ..auth import get_current_user
+from ..auth import CurrentUser, get_current_user
 from ..database import SessionLocal
 from ..models import Course, Enrollment, Student
 from ..schemas import EnrollmentRequest, EnrollmentResponse
@@ -39,7 +39,7 @@ def get_db():
 def enroll_course(
     request: EnrollmentRequest,
     db: Session = Depends(get_db),
-    current_user: str = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     學生選課功能：
@@ -117,3 +117,32 @@ def enroll_course(
 
     # 回傳成功的選課紀錄
     return new_enrollment
+
+
+# ----------------------------------------------------------
+# GET /enrollments/list — 教務限定：查看所有選課紀錄
+# 權限規則：
+#   - 沒帶 Token（未登入）→ 401
+#   - 學生角色 → 403（沒有權限）
+#   - 教務角色（admin）→ 200，回傳全部選課紀錄
+# 選課的 POST 端點維持「任何已登入者」皆可使用，
+# 不要把權限檢查順手加回去。
+# ----------------------------------------------------------
+@router.get("/list", response_model=list[EnrollmentResponse])
+def list_enrollments(
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    教務限定功能：回傳所有學生的選課紀錄清單。
+    學生角色呼叫會得到 403。
+    """
+    # ---- 權限檢查：只有教務（admin）可以看 ----
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="您沒有權限查看選課紀錄",
+        )
+
+    # ---- 教務 → 回傳所有選課紀錄 ----
+    return db.query(Enrollment).all()
