@@ -4,7 +4,7 @@
 
 - **後端 API**：使用 FastAPI + SQLAlchemy 實作，提供學生選課功能
 - **前端網頁**：使用原生 HTML + JavaScript（Fetch API），提供選課操作畫面
-- **安全認證**：使用 JWT Token 登入與權限驗證，保護選課 API
+- **安全認證**：使用 JWT Token 登入、角色權限驗證（教務／學生），密碼以 bcrypt 雜湊儲存
 - **資料庫遷移**：使用 Alembic 管理資料表結構版本
 - **容器化**：提供 Dockerfile，不用安裝 Python 也能跑
 - **測試**：使用 pytest 撰寫單元測試，並用 Playwright 做系統整合測試（E2E），搭配 GitHub Actions 自動執行
@@ -20,6 +20,7 @@
 3. 同一個學生**不能重複選**同一門課？
 4. 課程**名額是否已滿**？
 5. 呼叫的人**是否已登入**？（帶有效的 JWT Token）
+6. 呼叫的人**角色權限是否足夠**？（例如：教務專屬功能只有 `admin` 能用）
 
 全部通過檢查後，這筆選課紀錄才會被寫進資料庫。
 
@@ -35,6 +36,7 @@
 | 資料庫 | SQLite | 輕量、免安裝，適合開發與測試 |
 | 資料驗證 | Pydantic v2 | 檢查 API 請求／回應格式 |
 | 認證 | JWT（pyjwt） | 登入與 Token 權限驗證 |
+| 密碼加密 | passlib（bcrypt） | 使用者密碼以雜湊儲存，不存明文 |
 | 環境設定 | python-dotenv | 從 `.env` 讀取設定，密碼不外洩 |
 | 資料庫遷移 | Alembic | 版本化資料表結構，升級欄位不刪資料 |
 | 容器化 | Docker | 打包應用程式，免安裝 Python 直接跑 |
@@ -56,10 +58,11 @@ HW2/
 │   ├── database.py             # 資料庫引擎與 Session 設定
 │   ├── models.py               # SQLAlchemy ORM 模型（資料表定義）
 │   ├── schemas.py              # Pydantic 資料驗證模型
-│   ├── auth.py                 # JWT Token 產生與驗證依賴函式
+│   ├── auth.py                 # 密碼雜湊（bcrypt）+ JWT 產生、驗證與角色依賴函式
+│   ├── seed.py                 # 建立預設教務帳號 admin/admin（密碼 bcrypt 雜湊）
 │   ├── routers/
 │   │   ├── __init__.py
-│   │   └── enrollment.py       # 選課 API（需 Token 才可呼叫）
+│   │   └── enrollment.py       # 選課 API + 教務限定的 GET /enrollments/list
 │   └── static/
 │       ├── index.html          # 前端選課操作畫面
 │       ├── css/style.css       # 前端樣式（已從 HTML 獨立出來）
@@ -71,7 +74,9 @@ HW2/
 ├── tests/                      # 測試程式
 │   ├── __init__.py
 │   ├── conftest.py             # pytest 共用設定（測試資料庫 + Playwright 設定）
+│   ├── test_auth.py            # 密碼雜湊（bcrypt）+ User 模型單元測試
 │   ├── test_enrollment.py      # 選課 API 單元測試（含登入/401）
+│   ├── test_roles.py           # 角色權限（學生/教務）單元測試
 │   └── test_system.py          # 系統整合測試（瀏覽器 E2E）
 ├── requirements.txt            # Python 依賴套件清單
 ├── pyproject.toml              # pytest 設定
@@ -86,10 +91,12 @@ HW2/
 
 ## 4. 資料庫設計
 
-採用三張資料表，`enrollments` 是連接「學生」與「課程」的中間表（多對多）。
+採用四張資料表，`enrollments` 是連接「學生」與「課程」的中間表（多對多），`users` 記錄登入帳號與角色。
 
 ```
 students (1) ──────< (N) enrollments (N) >────── (1) courses
+
+users（登入帳號，與選課記錄沒有直接關聯）
 ```
 
 ### students（學生表）
@@ -129,6 +136,16 @@ students (1) ──────< (N) enrollments (N) >────── (1) cou
 
 **Unique 約束**：`(student_id, course_id)` — 同一位學生不能重複選同一門課（資料庫層級的最後防線）。
 
+### users（登入使用者表）
+| 欄位 | 型態 | 說明 |
+|------|------|------|
+| id | INTEGER | **PK**，自動遞增 |
+| username | VARCHAR(50) | 帳號，UNIQUE |
+| password_hash | VARCHAR(128) | 密碼的 bcrypt 雜湊（**不存明文**） |
+| role | VARCHAR(10) | 角色：admin（教務）/ student（學生） |
+| is_active | BOOLEAN | 帳號是否啟用（預設 True） |
+| created_at / updated_at | DATETIME | 建立／更新時間 |
+
 ---
 
 ## 5. 資料庫遷移（Alembic）
@@ -148,7 +165,7 @@ alembic revision --autogenerate -m "描述這次的變更"
 alembic current
 ```
 
-> 初始遷移腳本位於 `alembic/versions/409275526ff3_initial_schema.py`，定義了三張表的完整結構。
+> 目前有兩個遷移腳本：`alembic/versions/409275526ff3_initial_schema.py`（students / courses / enrollments 三張表）與 `alembic/versions/793f7c001c10_add_users_table.py`（新增 users 表）。
 
 ---
 
@@ -174,7 +191,22 @@ alembic current
 
 **失敗（HTTP 401）**：帳號或密碼錯誤
 
-> 目前是簡易示範，只接受固定帳號密碼 `admin / admin`。
+登入邏輯（`app/main.py`）：
+1. 先去 `users` 表查這個帳號
+2. 帳號**存在** → 用 bcrypt 驗證密碼 → 正確就發 Token，並把使用者的角色寫進 JWT
+3. 帳號**不存在** → 保留預設的 `admin / admin` 相容登入（方便未 seed 的環境也能用）
+
+JWT payload 範例（`role` 就是權限判斷的依據）：
+```json
+{
+    "sub": "admin",
+    "role": "admin",
+    "exp": 1789701439
+}
+```
+
+預設教務帳號由 `python -m app.seed` 建立（密碼以 bcrypt 雜湊存入，不存明文）：
+- **admin / admin**（角色：教務）
 
 ### 選課：`POST /enrollments/`（需登入）
 
@@ -220,8 +252,33 @@ Authorization: Bearer <access_token>
     │            │                │                 │                │              │              │
    POST      驗證 Authorization  查 students 表  查 courses 表  查 enrollments  統計 enrolled    commit
              Bearer Token                      是否有同一位學生    人數是否 >=    （正式寫入）
-                                              選同一門課         max_capacity
+                                               選同一門課         max_capacity
 ```
+
+### 查看選課紀錄：`GET /enrollments/list`（教務限定）
+
+只有 **教務（admin）** 角色可以呼叫，回傳所有選課紀錄清單（前端尚未使用，供 API 測試）。
+
+**成功（HTTP 200）**
+```json
+[
+    {
+        "id": 1,
+        "student_id": 1,
+        "course_id": 1,
+        "status": "enrolled",
+        "enrolled_at": "2026-09-11T03:35:30"
+    }
+]
+```
+
+**失敗的情境與狀態碼**
+| 情境 | HTTP 狀態碼 | 錯誤訊息 |
+|------|------------|----------|
+| 未帶 Token | 401 | `未提供認證 Token` |
+| 學生角色 | 403 | `您沒有權限查看選課紀錄` |
+
+> 選課 `POST /enrollments/` 則維持「任何已登入者」皆可用（學生與教務都可以選課）。
 
 ---
 
@@ -279,14 +336,20 @@ pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
-### 9.2 建立資料表
+### 9.2 建立資料表與預設帳號
 
 ```bash
-# 方式一：套用 Alembic 遷移（建議）
+# 套用 Alembic 遷移，建立全部資料表（含 users）
 alembic upgrade head
 
-# 方式二：直接啟動伺服器，程式會自動 create_all 建表
+# 建立預設教務帳號 admin / admin（密碼會先用 bcrypt 雜湊再存入）
+python -m app.seed
+
+# 若直接跑 seed 卻報「no such table: users」，
+# 表示還沒有 users 表，請先執行上面的 alembic upgrade head。
 ```
+
+> 方式二：直接啟動伺服器，程式會自動 `create_all` 建全部資料表（含 users）。但 seed 前若用 Alembic 管理版本，兩者並不會互相衝突（create_all 只會補建缺少的表）。
 
 ### 9.3 啟動後端伺服器
 
@@ -375,10 +438,17 @@ docker run -p 8000:8000 course-enrollment
 
 ```bash
 source .venv/bin/activate
-python -m pytest tests/test_enrollment.py -v
+python -m pytest tests/test_auth.py -v         # 密碼雜湊（bcrypt）+ User 模型
+python -m pytest tests/test_enrollment.py -v   # 選課 API（含登入 / 401）
+python -m pytest tests/test_roles.py -v        # 角色權限（學生 / 教務）
+python -m pytest tests/test_auth.py tests/test_enrollment.py tests/test_roles.py -v   # 全部單元測試
 ```
 
-涵蓋情境：**選課成功**、**重複選課被擋（409）**、**名額額滿被擋（409）**、**未登入被擋（401）**、**登入拿 Token**。
+涵蓋情境（共 15 個）：
+
+- `test_auth.py`（5 個）：密碼不存明文、正確／錯誤密碼驗證、不合法雜湊不回傳例外、User 模型存雜湊
+- `test_enrollment.py`（5 個）：選課成功、重複選課被擋（409）、名額額滿被擋（409）、未登入被擋（401）、登入拿 Token
+- `test_roles.py`（5 個）：`/enrollments/list` 未登入 401、學生 403、教務 200；選課 POST 學生／教務皆可用
 
 > 說明：單元測試使用**記憶體資料庫**（`sqlite://` + StaticPool），
 > 透過 FastAPI 的 `dependency_overrides` 把資料庫換成測試資料庫，
@@ -407,7 +477,7 @@ source .venv/bin/activate
 python -m pytest -v
 ```
 
-預期結果：**6 passed**。
+預期結果：**16 passed**（15 個單元測試 + 1 個系統整合測試）。
 
 ### 12.4 GitHub Actions 自動測試
 
@@ -430,25 +500,28 @@ python -m pytest -v
 │         瀏覽器（前端）         │
 │   app/static/index.html     │
 │   （HTML + CSS + JS）        │
-│   先登入拿 Token → 選課       │
+│   先登入拿「帶角色的 Token」→ 選課       │
 └────────────┬───────────────┘
              │ ① POST /login
              │ ② POST /enrollments/  (JSON + Bearer Token)
+             │ ③ GET  /enrollments/list（教務限定）
              ▼
 ┌────────────────────────────┐
 │      FastAPI（後端）          │
-│   app/auth.py（JWT 驗證）     │
+│   app/auth.py（bcrypt+JWT）  │
+│   驗證 Token → 取出角色        │
 │   app/routers/enrollment.py │
-│   └─ 4 個業務檢查            │
-│   ① 學生存在  ② 課程存在      │
-│   ③ 不重複    ④ 未額滿        │
+│   └─ 5 個業務檢查            │
+│   ① 已登入   ② 角色權限       │
+│   ③ 學生存在 ④ 課程存在        │
+│   ⑤ 不重複／未額滿            │
 └────────────┬───────────────┘
              │ SQLAlchemy ORM
              ▼
 ┌────────────────────────────┐
 │        SQLite（app.db）      │
 │   students / courses /      │
-│   enrollments               │
+│   enrollments / users       │
 │   （由 Alembic 管理結構）     │
 └────────────────────────────┘
 ```
@@ -462,6 +535,8 @@ python -m pytest -v
 | 前端顯示「無法連線到後端伺服器」 | 確認 uvicorn 有啟動、且埠號是 8000 |
 | 選課一直回傳 401 | 重新整理頁面（讓自動登入再跑一次）或確認 Token 沒過期 |
 | 選課一直回傳「找不到該學生／課程」 | 資料庫還是空的，請先餵入學生與課程資料（見第 10 節） |
+| `python -m app.seed` 報 `no such table: users` | 還未建表，先執行 `alembic upgrade head` 再 seed |
+| `GET /enrollments/list` 回傳 403 | 換成教務（admin）角色的 Token；學生角色沒有權限 |
 | `app.db` 被搞亂了 | 直接刪掉 `app.db`，重新執行 `alembic upgrade head` 重建資料表 |
 | 系統測試報 `no-sandbox` 相關錯誤 | 已內建 `--no-sandbox` 參數，通常不需要處理 |
 | Chromium 沒下載 | 執行 `python -m playwright install chromium` |
@@ -471,6 +546,6 @@ python -m pytest -v
 ## 15. 後續可擴充方向（Roadmap）
 
 - 新增「新增學生／課程／查詢課程清單」的 CRUD API
-- JWT 登入改用資料庫裡的真實使用者，並加上角色權限（學生／教務）
+- ~~JWT 登入改用資料庫裡的真實使用者，並加上角色權限（學生／教務）~~ ✅ 已完成
 - 增加「退選」「成績輸入」功能
 - 部署時資料庫改用 PostgreSQL，連線資訊放入 `.env`
